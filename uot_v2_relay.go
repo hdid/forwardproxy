@@ -158,6 +158,10 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		if err := writeUOTFrame(streamWriter, isConnect, dst, payload, uotMaxDatagram); err != nil {
 			return err
 		}
+		if padding {
+			// flushingIoCopy flushes each padded chunk from its sole writer goroutine.
+			return nil
+		}
 		return http.NewResponseController(w).Flush()
 	}
 
