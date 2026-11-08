@@ -14,6 +14,7 @@ import (
 const uotV2MagicAddress = "sp.v2.udp-over-tcp.arpa"
 
 var errUOTMalformed = errors.New("malformed UoT v2 frame")
+var errUOTOversized = errors.New("oversized UoT v2 datagram")
 
 type uotAddress struct {
 	Network string
@@ -199,8 +200,14 @@ func readUOTFrame(r io.Reader, isConnect bool, fixed uotAddress, maxPayload int)
 		return uotAddress{}, nil, err
 	}
 	n := int(binary.BigEndian.Uint16(size[:]))
-	if n == 0 || n > maxPayload {
-		return uotAddress{}, nil, fmt.Errorf("%w: payload length %d outside limit", errUOTMalformed, n)
+	if n == 0 {
+		return uotAddress{}, nil, errUOTMalformed
+	}
+	if n > maxPayload {
+		if _, err := io.CopyN(io.Discard, r, int64(n)); err != nil {
+			return uotAddress{}, nil, err
+		}
+		return uotAddress{}, nil, errUOTOversized
 	}
 	payload := make([]byte, n)
 	if _, err := io.ReadFull(r, payload); err != nil {
