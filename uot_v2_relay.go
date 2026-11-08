@@ -166,6 +166,9 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		defer cancel()
 		for {
 			dst, payload, readErr := readUOTFrame(streamReader, isConnect, fixed, uotMaxDatagram)
+			if errors.Is(readErr, errUOTOversized) {
+				continue
+			}
 			if readErr != nil {
 				return
 			}
