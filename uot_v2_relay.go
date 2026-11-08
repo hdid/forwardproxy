@@ -24,6 +24,30 @@ const (
 )
 
 var uotActiveSessions atomic.Int32
+var (
+	uotConnectionMu sync.Mutex
+	uotConnectionSessions = make(map[string]int)
+)
+
+func acquireUOTSession(remoteAddr string) bool {
+	uotConnectionMu.Lock()
+	defer uotConnectionMu.Unlock()
+	if uotConnectionSessions[remoteAddr] >= 64 {
+		return false
+	}
+	uotConnectionSessions[remoteAddr]++
+	return true
+}
+
+func releaseUOTSession(remoteAddr string) {
+	uotConnectionMu.Lock()
+	defer uotConnectionMu.Unlock()
+	if uotConnectionSessions[remoteAddr] <= 1 {
+		delete(uotConnectionSessions, remoteAddr)
+	} else {
+		uotConnectionSessions[remoteAddr]--
+	}
+}
 
 // serveUOT handles one UoT v2 HTTP/2 CONNECT stream. It intentionally uses a
 // dedicated SOCKS5 UDP ASSOCIATE control connection and relay socket per stream.
@@ -34,9 +58,13 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	if h.upstream == nil || (h.upstream.Scheme != "socks5" && h.upstream.Scheme != "socks5h") {
 		return caddyhttp.Error(http.StatusBadGateway, errors.New("UoT requires a SOCKS5 upstream"))
 	}
+	if !acquireUOTSession(r.RemoteAddr) {
+		return caddyhttp.Error(http.StatusServiceUnavailable, errors.New("per-connection UDP session limit reached"))
+	}
+	defer releaseUOTSession(r.RemoteAddr)
 	if uotActiveSessions.Add(1) > uotMaxSessions {
 		uotActiveSessions.Add(-1)
-		return caddyhttp.Error(http.StatusServiceUnavailable, errors.New("UDP session limit reached"))
+		return caddyhttp.Error(http.StatusServiceUnavailable, errors.New("server UDP session limit reached"))
 	}
 	defer uotActiveSessions.Add(-1)
 
@@ -109,6 +137,10 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer control.Close()
 	defer relay.Close()
+	go func() {
+		<-ctx.Done()
+		_ = relay.Close()
+	}()
 
 	var writeMu sync.Mutex
 	writeFrame := func(dst uotAddress, payload []byte) error {
