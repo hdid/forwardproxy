@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,18 +40,60 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer uotActiveSessions.Add(-1)
 
-	// The HTTP/2 stream is already authenticated by ServeHTTP's existing
-	// credentials check. No second authentication layer is introduced.
+	// Preserve the existing Naive stream padding layer at the byte-stream
+	// boundary. UoT framing itself remains independent of padding.
+	padding := r.Header.Get("Padding") != ""
+	if padding {
+		paddingLen := rand.Intn(32) + 30
+		paddingValue := make([]byte, paddingLen)
+		bits := rand.Uint64()
+		for i := 0; i < 16; i++ {
+			paddingValue[i] = "!#$()+<>?@[]^\x60{}"[bits&15]
+			bits >>= 4
+		}
+		for i := 16; i < paddingLen; i++ {
+			paddingValue[i] = '~'
+		}
+		w.Header().Set("Padding", string(paddingValue))
+	}
 	w.WriteHeader(http.StatusOK)
 	if err := http.NewResponseController(w).Flush(); err != nil {
 		return err
 	}
 	defer r.Body.Close()
 
+	var streamReader io.Reader = r.Body
+	var streamWriter io.Writer = w
+	var inputPipe *io.PipeReader
+	var outputPipe *io.PipeWriter
+	if padding {
+		pr, pw := io.Pipe()
+		inputPipe = pr
+		bufPtr := bufferPool.Get().(*[]byte)
+		go func() {
+			defer bufferPool.Put(bufPtr)
+			_, copyErr := flushingIoCopy(pw, r.Body, (*bufPtr)[:cap(*bufPtr)], RemovePadding)
+			_ = pw.CloseWithError(copyErr)
+		}()
+		streamReader = pr
+
+		outReader, outWriter := io.Pipe()
+		outputPipe = outWriter
+		bufPtrOut := bufferPool.Get().(*[]byte)
+		go func() {
+			defer bufferPool.Put(bufPtrOut)
+			_, copyErr := flushingIoCopy(w, outReader, (*bufPtrOut)[:cap(*bufPtrOut)], AddPadding)
+			_ = outReader.CloseWithError(copyErr)
+		}()
+		streamWriter = outWriter
+		defer inputPipe.Close()
+		defer outputPipe.Close()
+	}
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	isConnect, fixed, err := readUOTRequest(r.Body)
+	isConnect, fixed, err := readUOTRequest(streamReader)
 	if err != nil {
 		return fmt.Errorf("invalid UoT request: %w", err)
 	}
@@ -72,7 +114,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	writeFrame := func(dst uotAddress, payload []byte) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		if err := writeUOTFrame(w, isConnect, dst, payload, uotMaxDatagram); err != nil {
+		if err := writeUOTFrame(streamWriter, isConnect, dst, payload, uotMaxDatagram); err != nil {
 			return err
 		}
 		return http.NewResponseController(w).Flush()
@@ -82,7 +124,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	go func() {
 		defer cancel()
 		for {
-			dst, payload, readErr := readUOTFrame(r.Body, isConnect, fixed, uotMaxDatagram)
+			dst, payload, readErr := readUOTFrame(streamReader, isConnect, fixed, uotMaxDatagram)
 			if readErr != nil {
 				return
 			}
