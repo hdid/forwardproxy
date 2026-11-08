@@ -241,9 +241,6 @@ func (h *Handler) authorizeUDP(dst uotAddress) error {
 		return errors.New("invalid UDP destination host")
 	}
 	for _, rule := range h.aclRules {
-		if _, ok := rule.(*aclDomainRule); !ok {
-			continue
-		}
 		switch rule.tryMatch(nil, host) {
 		case aclDecisionDeny:
 			return errors.New("UDP destination domain is not allowed")
