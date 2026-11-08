@@ -381,7 +381,7 @@ func decodeSOCKS5Datagram(packet []byte) (uotAddress, []byte, error) {
 	dst, err := readSOCKSAddress(reader)
 	if err != nil { return uotAddress{}, nil, err }
 	offset := len(packet) - reader.Len()
-	if offset >= len(packet) { return uotAddress{}, nil, errors.New("empty SOCKS5 UDP payload") }
+	if offset >= len(packet)-3 { return uotAddress{}, nil, errors.New("empty SOCKS5 UDP payload") }
 	return dst, packet[3+offset:], nil
 }
 
