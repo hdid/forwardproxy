@@ -146,6 +146,9 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	writeFrame := func(dst uotAddress, payload []byte) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		if len(payload) > udpPayloadLimit(dst) {
+			return errors.New("UDP datagram exceeds destination payload limit")
+		}
 		if err := writeUOTFrame(streamWriter, isConnect, dst, payload, uotMaxDatagram); err != nil {
 			return err
 		}
@@ -159,6 +162,9 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 			dst, payload, readErr := readUOTFrame(streamReader, isConnect, fixed, uotMaxDatagram)
 			if readErr != nil {
 				return
+			}
+			if len(payload) > udpPayloadLimit(dst) {
+				continue
 			}
 			if !isConnect {
 				if authErr := h.authorizeUDP(dst); authErr != nil {
@@ -199,13 +205,20 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		} else if err := h.authorizeUDP(dst); err != nil {
 			continue
 		}
-		if len(payload) > uotMaxDatagram {
+		if len(payload) > udpPayloadLimit(dst) {
 			continue
 		}
 		if err := writeFrame(dst, payload); err != nil {
 			return err
 		}
 	}
+}
+
+func udpPayloadLimit(dst uotAddress) int {
+	if dst.Port == 53 {
+		return 4096
+	}
+	return 1200
 }
 
 func (h *Handler) authorizeUDP(dst uotAddress) error {
@@ -244,7 +257,7 @@ func (h *Handler) authorizeUDP(dst uotAddress) error {
 }
 
 func (h *Handler) openSOCKS5UDP(ctx context.Context) (net.Conn, *net.UDPConn, error) {
-	var d net.Dialer
+	d := net.Dialer{Timeout: time.Duration(h.DialTimeout)}
 	control, err := d.DialContext(ctx, "tcp", h.upstream.Host)
 	if err != nil {
 		return nil, nil, err
