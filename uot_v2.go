@@ -96,7 +96,7 @@ func readPacketAddress(r io.Reader) (uotAddress, error) {
 	}
 }
 
-func writeSOCKSAddress(w io.Writer, a uotAddress) error {
+func writeFull(w io.Writer, b []byte) error {\n\tfor len(b) > 0 {\n\t\tn, err := w.Write(b)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\tif n == 0 {\n\t\t\treturn io.ErrShortWrite\n\t\t}\n\t\tb = b[n:]\n\t}\n\treturn nil\n}\n\nfunc writeSOCKSAddress(w io.Writer, a uotAddress) error {
 	ip := net.ParseIP(a.Host)
 	switch {
 	case ip != nil && ip.To4() != nil:
@@ -206,7 +206,7 @@ func writeUOTFrame(w io.Writer, isConnect bool, destination uotAddress, payload 
 	}
 	var size [2]byte
 	binary.BigEndian.PutUint16(size[:], uint16(len(payload)))
-	if _, err := w.Write(size[:]); err != nil {
+	if err := writeFull(w, size[:]); err != nil {
 		return err
 	}
 	_, err := w.Write(payload)
