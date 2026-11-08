@@ -372,4 +372,3 @@ func decodeSOCKS5Datagram(packet []byte) (uotAddress, []byte, error) {
 	return dst, packet[3+offset:], nil
 }
 
-var _ = url.URL{}
