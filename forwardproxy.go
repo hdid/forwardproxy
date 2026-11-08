@@ -301,6 +301,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			}
 		}
 
+		// UoT v2 uses a reserved CONNECT authority and carries its own
+		// destination in the stream preamble. Route it before ordinary TCP dial.
+		if strings.EqualFold(r.URL.Hostname(), uotV2MagicAddress) ||
+			strings.EqualFold(reqHost, uotV2MagicAddress) {
+			return h.serveUOT(w, r)
+		}
+
 		// HTTP CONNECT Fast Open: Directly responds with a 200 OK
 		// before attempting to connect to origin to reduce response latency.
 		// We merely close the connection if Open fails.
