@@ -223,6 +223,5 @@ func writeUOTFrame(w io.Writer, isConnect bool, destination uotAddress, payload 
 	if err := writeFull(w, size[:]); err != nil {
 		return err
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeFull(w, payload)
 }
