@@ -125,6 +125,9 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("invalid UoT request: %w", err)
 	}
+	if !strings.EqualFold(fixed.Host, uotV2MagicAddress) {
+		return errors.New("invalid UoT v2 magic destination")
+	}
 	if isConnect {
 		if err := h.authorizeUDP(fixed); err != nil {
 			return err
