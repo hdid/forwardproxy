@@ -68,6 +68,18 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer uotActiveSessions.Add(-1)
 
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	control, relay, err := h.openSOCKS5UDP(ctx)
+	if err != nil {
+		// Establish the upstream association before committing HTTP 200 so an
+		// unavailable Xray SOCKS5 service is reported as a real CONNECT failure.
+		return caddyhttp.Error(http.StatusBadGateway,
+			fmt.Errorf("SOCKS5 UDP ASSOCIATE failed: %w", err))
+	}
+	defer control.Close()
+	defer relay.Close()
+
 	// Preserve the existing Naive stream padding layer at the byte-stream
 	// boundary. UoT framing itself remains independent of padding.
 	padding := r.Header.Get("Padding") != ""
@@ -118,9 +130,6 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		defer outputPipe.Close()
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
 	isConnect, fixed, err := readUOTRequest(streamReader)
 	if err != nil {
 		return fmt.Errorf("invalid UoT request: %w", err)
@@ -134,12 +143,6 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	control, relay, err := h.openSOCKS5UDP(ctx)
-	if err != nil {
-		return fmt.Errorf("SOCKS5 UDP ASSOCIATE failed: %w", err)
-	}
-	defer control.Close()
-	defer relay.Close()
 	go func() {
 		<-ctx.Done()
 		_ = relay.Close()
