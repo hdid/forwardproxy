@@ -138,7 +138,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		return errors.New("invalid UoT v2 magic destination")
 	}
 	if isConnect {
-		if err := h.authorizeUDP(fixed); err != nil {
+		if err := h.authorizeUDP(&fixed); err != nil {
 			return err
 		}
 	}
@@ -180,7 +180,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 				continue
 			}
 			if !isConnect {
-				if authErr := h.authorizeUDP(dst); authErr != nil {
+				if authErr := h.authorizeUDP(&dst); authErr != nil {
 					// A denied datagram is dropped; the association remains alive.
 					continue
 				}
@@ -215,7 +215,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 		}
 		if isConnect {
 			dst = fixed
-		} else if err := h.authorizeUDP(dst); err != nil {
+		} else if err := h.authorizeUDP(&dst); err != nil {
 			continue
 		}
 		if len(payload) > udpPayloadLimit(dst) {
@@ -234,36 +234,39 @@ func udpPayloadLimit(dst uotAddress) int {
 	return 1200
 }
 
-func (h *Handler) authorizeUDP(dst uotAddress) error {
-	if dst.Port == 0 || !h.portIsAllowed(strconv.Itoa(int(dst.Port))) {
+func (h *Handler) authorizeUDP(dst *uotAddress) error {
+	if dst == nil || dst.Port == 0 || !h.portIsAllowed(strconv.Itoa(int(dst.Port))) {
 		return errors.New("UDP destination port is not allowed")
 	}
 	if ip := net.ParseIP(dst.Host); ip != nil {
-		for _, rule := range h.aclRules {
-			switch rule.tryMatch(ip, "") {
-			case aclDecisionDeny:
-				return errors.New("UDP destination IP is not allowed")
-			case aclDecisionAllow:
-				return nil
-			}
+		if !h.hostIsAllowed("", ip) {
+			return errors.New("UDP destination IP is not allowed")
 		}
-		return errors.New("UDP destination IP is not allowed")
+		return nil
 	}
 	host := strings.TrimSuffix(strings.ToLower(dst.Host), ".")
 	if host == "" || strings.ContainsAny(host, " /\\\x00") {
 		return errors.New("invalid UDP destination host")
 	}
-	for _, rule := range h.aclRules {
-		switch rule.tryMatch(nil, host) {
-		case aclDecisionDeny:
-			return errors.New("UDP destination domain is not allowed")
-		case aclDecisionAllow:
+	if !h.hostIsAllowed(host, nil) {
+		return errors.New("UDP destination domain is not allowed")
+	}
+	// Resolve locally, apply the same ordered host/IP ACL as TCP, then pass a
+	// numeric address to SOCKS5. This prevents the upstream resolver from
+	// resolving an allowed hostname to a private or otherwise denied address.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return errors.New("UDP destination domain could not be resolved")
+	}
+	for _, ip := range ips {
+		if h.hostIsAllowed(host, ip) {
+			dst.Host = ip.String()
 			return nil
 		}
 	}
-	// Domain destinations are intentionally not resolved locally. The Xray
-	// SOCKS5 upstream must enforce post-resolution private-address policy.
-	return nil
+	return errors.New("UDP destination resolves only to disallowed IP addresses")
 }
 
 func (h *Handler) openSOCKS5UDP(ctx context.Context) (net.Conn, *net.UDPConn, error) {
