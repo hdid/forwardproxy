@@ -64,8 +64,8 @@ func TestUOTSessionLimits(t *testing.T) {
 }
 
 func TestUDPPayloadLimits(t *testing.T) {
-	if got := udpPayloadLimit(uotAddress{Port: 53}); got != 4096 {
-		t.Fatalf("DNS limit = %d, want 4096", got)
+	if got := udpPayloadLimit(uotAddress{Port: 53}); got != 1232 {
+		t.Fatalf("DNS limit = %d, want 1232", got)
 	}
 	if got := udpPayloadLimit(uotAddress{Port: 443}); got != 1200 {
 		t.Fatalf("ordinary UDP limit = %d, want 1200", got)
