@@ -229,7 +229,7 @@ func (h *Handler) serveUOT(w http.ResponseWriter, r *http.Request) error {
 
 func udpPayloadLimit(dst uotAddress) int {
 	if dst.Port == 53 {
-		return 4096
+		return 1232
 	}
 	return 1200
 }
